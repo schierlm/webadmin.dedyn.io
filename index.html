@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<head>
+	<meta charset="utf-8">
+	<title>DESEC/DEDYN webadmin (unofficial)</title>
+	<style type="text/css">
+		body { font-family: Verdana, Arial, Helvetica, sans-serif; }
+		table { border: 2px solid black; border-collapse: collapse; }
+		td, th { border: 1px solid gray; vertical-align: top; }
+		th {border-bottom: 1px solid black; }
+		textarea { width: 400px; height: 50px; }
+	</style>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.0/gh-fork-ribbon.min.css" />
+	<script type="text/javascript">
+		var token = prompt("Token/Password", location.hash.substring(1));
+		var encoder = document.createElement("div");
+		reload();
+		
+		var recordTypes = ['A','AAAA','CNAME','MX','NS','SRV','TXT','','AFSDB','CAA','CERT','CDNSKEY','CDS','DS','HINFO','KEY','LOC','NAPTR','NSEC','NSEC3','OPENPGPKEY','PTR','RP','SPF','SSHFP','TKEY, TSIG','TLSA','SMIMEA','URI','A6','DHCID','DLV','EUI48/EUI64','IPSECKEY','KEY','KX','MAILA','MAILB','MINFO','MR','RKEY','SIG','WKS'];
+		var newRowHTML = '<td><input type="text" onchange="setUpdate(this);" value=""></td><td><select>'+recordTypes.map(x=>'<option value="'+x+'">'+x+'</option>').join("")+'</select></td><td><input type="text" onchange="setUpdate(this);" value="3600"></td><td><textarea onchange="setUpdate(this);"></textarea></td><td><input type="checkbox"></td><td></td>';
+
+		function h(text) {
+			encoder.innerText = text;
+			return encoder.innerHTML.replace('"', "&quot;").replace("'", "&apos;");
+		}
+
+		function reload() {
+			fetch('https://desec.io/api/v1/domains/', {
+				method: 'GET',
+				headers: {
+					'Authorization': 'Token '+token
+				},
+			}).then((response) => {
+				if (response.status != 200) response.text().then(alert);
+				return response.json();
+			}).then((response) => {
+				var b= '';
+				response.sort((a, b) => a.name.localeCompare(b.name));
+				for (var x of response) {
+					b +="<h2>"+h(x.name)+'</h2><div id="content-'+h(x.name)+'"><a href="javascript:load(\''+h(x.name)+'\')">[load]</a></div>';
+				}
+				b +='<h2>Add new</h2><p><input id="addbox" type="text"><a href="javascript:add()">[add]</a></p>';
+				document.getElementById("content").innerHTML = b;
+			});
+		}
+
+		function add() {
+			var data = {name: document.getElementById("addbox").value};
+			fetch('https://desec.io/api/v1/domains/'+name+"/", {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': 'Token '+token
+				},
+				body: JSON.stringify(data)
+			}).then((response) => {
+				if (response.status == 201) {
+					reload();
+				} else {
+					response.text().then(alert);
+				}
+			});
+		}
+
+		function del(name) {
+			if (confirm("delete "+name+"?")) {
+				fetch('https://desec.io/api/v1/domains/'+name+"/", {
+					method: 'DELETE',
+					headers: {
+						'Authorization': 'Token '+token
+					}
+				}).then((response) => {
+					if (response.status == 204) {
+						reload();
+					} else {
+						response.text().then(alert);
+					}
+				});
+			}
+		}
+		
+		function load(name) {
+			fetch('https://desec.io/api/v1/domains/'+name+"/rrsets/", {
+				method: 'GET',
+				headers: {
+					'Authorization': 'Token '+token
+				},
+			}).then((response) => response.json()).then((response) => {
+				var b = '<table><tr><th>Subname</th><th>Type</th><th>TTL</th><th>Records</th><th>Update</th><th>Delete</th></tr>';
+				response.sort((a, b) => a.subname.localeCompare(b.subname));
+				for (var x of response) {
+					b += '<tr><td>'+h(x.subname)+'</td><td>'+h(x.type)+'</td><td><input type="text" onchange="setUpdate(this);" value="'+h(x.ttl)+'"></td><td><textarea onchange="setUpdate(this);">'+x.records.map(h).join("\n")+'</textarea></td><td><input type="checkbox"></td><td><input type="checkbox"></td></tr>';
+				}
+				b += '<tr>'+newRowHTML + '</tr></table><a href="javascript:save(\''+name+'\')">[save]</a> <a href="javascript:del(\''+name+'\')">[delete]</a>';
+				document.getElementById("content-"+name).innerHTML = b;
+			});
+		}
+		
+		function setUpdate(elem) {
+			var row = elem.closest("tr");
+			row.childNodes[4].firstChild.checked=true;
+			if (row.nextSibling == null) {
+				var newRow = document.createElement("tr");
+				newRow.innerHTML = newRowHTML;
+				row.parentNode.appendChild(newRow);
+			}
+		}
+		
+		function textOrValue(cell) {
+			if (cell.firstElementChild == null) {
+				return cell.innerText;
+			} else {
+				return cell.firstChild.value;
+			}
+		}
+
+		function save(name) {
+			var rows = document.getElementById("content-"+name).querySelectorAll("tr");
+			var data = [];
+			for (var i = 1; i < rows.length; i++) {
+				var row = rows[i];
+				var rrset = {
+					subname: textOrValue(row.childNodes[0]), 
+					type: textOrValue(row.childNodes[1]),
+					ttl: +textOrValue(row.childNodes[2]),
+					records: textOrValue(row.childNodes[3]).split("\n")
+				};
+				if (row.childNodes[5].firstChild != null && row.childNodes[5].firstChild.checked) {
+					rrset.records = [];
+				} else if (!row.childNodes[4].firstChild.checked) {
+					continue;
+				}
+				data.push(rrset);
+			}
+			if (data.length == 0) return;
+			fetch('https://desec.io/api/v1/domains/'+name+"/rrsets/", {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': 'Token '+token
+				},
+				body: JSON.stringify(data)
+			}).then((response) => {
+				console.log(response);
+				if (response.status == 200) {
+					load(name);
+				} else {
+					response.text().then(alert);
+				}
+			});
+		}
+	</script>
+</head>
+<body>
+<a class="github-fork-ribbon" href="https://github.com/schierlm/webadmin.on.dedyn.io" title="Fork me on GitHub">Fork me on GitHub</a>
+<h1>DESEC/DEDYN webadmin (unofficial)</h1>
+<div id="content">(Loading...)</div>
+<body>
